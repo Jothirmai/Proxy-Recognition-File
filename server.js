@@ -70,21 +70,21 @@ app.post('/admin/login', (req, res) => {
     }
 });
 
-app.post('/admin/upload-files', upload.fields([{ name: 'studentscsv' }, { name: 'attendancecsv' }]), async (req, res) => {
+app.post('/admin/upload-files', upload.fields([{ name: 'studentscsv', maxCount: 1 }, { name: 'attendancecsv', maxCount: 1 }]), async (req, res) => {
     try {
         const studentsCsv = req.files['studentscsv'][0].buffer.toString();
         const attendanceCsv = req.files['attendancecsv'][0].buffer.toString();
 
         const studentsData = await parseCSV(studentsCsv);
-        await saveToMongoDB(studentsData);
+        const attendanceData = await parseCSV(attendanceCsv);
+        await saveToMongoDB(studentsData,attendanceData);
 
-        res.render('C:/Users/jothi/OneDrive/Desktop/jothirmai/views/admin_dashboards.ejs', { successMessage: 'Files uploaded successfully' });
+        res.render('C:/Users/jothi/OneDrive/Desktop/jothirmai/views/admin_dashboards.ejs', { successMessage: 'Files uploaded successfully'});
     } catch (error) {
         console.error(error);
         res.status(500).send('Internal Server Error');
     }
 });
-
 
 
 async function parseCSV(csvData) {
@@ -110,16 +110,18 @@ async function parseCSV(csvData) {
 
 
 
-async function saveToMongoDB(data) {
+async function saveToMongoDB(data1,data2) {
     try {
-        await Student.insertMany(data);
+        await Student.insertMany(data1);
+        console.log('Data saved to MongoDB');
+
+        await ProxyList.insertMany(data2);
         console.log('Data saved to MongoDB');
     } catch (error) {
         console.error('Error saving data to MongoDB:', error);
         throw error;
     }
 }
-
 
 
 app.get('/student-login', (req, res) => {
