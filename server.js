@@ -2,11 +2,10 @@ const express = require('express');
 const mongoose = require('mongoose');
 const multer = require('multer');
 const csv = require('csv-parser');
-const fs = require('fs');
 const ejs = require('ejs');
+const path = require('path');
 const app = express();
 const ipAddress = 'localhost';
-
 const port = 3000;
 const mongoURI = 'mongodb://localhost:27017/database';
 
@@ -17,18 +16,24 @@ db.once('open', () => {
     console.log('Connected to MongoDB');
 });
 
+
 const studentSchema = new mongoose.Schema({
-    rollNumber: String,
     name: String,
-    password: String
+    rollNumber: String
 });
 
 const proxyListSchema = new mongoose.Schema({
-    rollNumber: String,
-    name: String
+    name: String,
+    rollNumber: String
+});
+
+const studentsSchema = new mongoose.Schema({
+    name: String,
+    rollNumber: String
 });
 
 const Student = mongoose.model('Student', studentSchema);
+const students = mongoose.model('students', studentsSchema);
 const ProxyList = mongoose.model('ProxyList', proxyListSchema);
 
 const storage = multer.memoryStorage();
@@ -39,6 +44,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // EJS configuration
 app.set('view engine', 'ejs');
+app.set('views', path.join(__dirname, 'views')); 
 
 // Routes
 app.get('/', (req, res) => {
@@ -77,15 +83,16 @@ app.post('/admin/upload-files', upload.fields([{ name: 'studentscsv', maxCount: 
 
         const studentsData = await parseCSV(studentsCsv);
         const attendanceData = await parseCSV(attendanceCsv);
-        await saveToMongoDB(studentsData,attendanceData);
 
-        res.render('C:/Users/jothi/OneDrive/Desktop/jothirmai/views/admin_dashboards.ejs', { successMessage: 'Files uploaded successfully'});
+        await saveToMongoDB(studentsData);
+        await processAttendance(attendanceData);
+
+        res.render('admin_dashboards', { successMessage: 'Files uploaded successfully' });
     } catch (error) {
         console.error(error);
         res.status(500).send('Internal Server Error');
     }
 });
-
 
 async function parseCSV(csvData) {
     return new Promise((resolve, reject) => {
@@ -104,21 +111,63 @@ async function parseCSV(csvData) {
             reject(error);
         });
 
-        fs.createReadStream(csvData).pipe(parser);
+        const stream = require('stream');
+        const readable = new stream.Readable();
+        readable._read = () => {};
+        readable.push(csvData);
+        readable.push(null);
+
+        readable.pipe(parser);
     });
 }
 
-
-
-async function saveToMongoDB(data1,data2) {
+async function saveToMongoDB(data) {
     try {
-        await Student.insertMany(data1);
-        console.log('Data saved to MongoDB');
-
-        await ProxyList.insertMany(data2);
+        await Student.insertMany(data);    
         console.log('Data saved to MongoDB');
     } catch (error) {
         console.error('Error saving data to MongoDB:', error);
+        throw error;
+    }
+}
+
+async function processAttendance(data) {
+    try {
+        let studentsAdded = 0;
+        let proxyList = [];
+
+        for (const currentRecord of data) {
+            const isRollNumberInProxyList = proxyList.some((record) => record.rollNumber === currentRecord.RollNumber);
+
+            if (isRollNumberInProxyList) {
+                continue; 
+            }
+
+            const duplicateIndex = data.findIndex(
+                (record, index) => index !== data.indexOf(currentRecord) && record.RollNumber === currentRecord.RollNumber
+            );
+
+            if (duplicateIndex !== -1) {
+                proxyList.push({
+                    rollNumber: currentRecord.RollNumber,
+                    name: currentRecord.Name
+                });
+                console.log(`Roll number ${currentRecord.RollNumber} added to ProxyList`);
+            } else {
+                await Student.create({
+                    rollNumber: currentRecord.RollNumber,
+                    name: currentRecord.Name,
+                    password: `${currentRecord.Name.toLowerCase()}123`
+                });
+                studentsAdded++;
+            }
+        }
+
+        await ProxyList.insertMany(proxyList);
+
+        console.log(`Attendance processed successfully. Students added: ${studentsAdded}`);
+    } catch (error) {
+        console.error('Error processing attendance:', error);
         throw error;
     }
 }
@@ -133,13 +182,19 @@ app.post('/student/login', async (req, res) => {
     const password = req.body.password;
 
     try {
-        const student = await Student.findOne({ rollNumber, password });
+        const student = await Student.findOne({ rollNumber, password == `${rollNumber}123` });
         if (student) {
             const isProxy = await ProxyList.findOne({ rollNumber });
             if (isProxy) {
                 res.render('C:/Users/jothi/OneDrive/Desktop/jothirmai/views/dashboard_red.ejs', { username: student.name });
             } else {
+                const isPresent = await students.findOne({ rollNumber });
+                if(isPresent){
                 res.render('C:/Users/jothi/OneDrive/Desktop/jothirmai/views/dashboard.ejs', { username: student.name });
+                }
+                else{
+                    res.render('C:/Users/jothi/OneDrive/Desktop/jothirmai/views/dashboard_absent.ejs', { username: student.name });
+                }
             }
         } else {
             res.render('C:/Users/jothi/OneDrive/Desktop/jothirmai/views/student_login.ejs', { message: 'Invalid student credentials' });
@@ -155,7 +210,11 @@ app.get('/dashboard-red', (req, res) => {
 });
 
 app.get('/dashboard', (req, res) => {
-    res.render('C:/Users/jothi/OneDrive/Desktop/jothirmai/views/dashboard.ejs', { username: 'StudentName' }); 
+    res.render('C:/Users/jothi/OneDrive/Desktop/jothirmai/views/dashboard.ejs', { username: 'StudentName' });
+});
+
+app.get('/dashboard-absent', (req, res) => {
+    res.render('C:/Users/jothi/OneDrive/Desktop/jothirmai/views/dashboard_absent.ejs', { username: 'StudentName' });
 });
 
 app.get('/proxy-list', async (req, res) => {
@@ -166,3 +225,4 @@ app.get('/proxy-list', async (req, res) => {
 app.listen(port, () => {
     console.log(`Server is running on http://${ipAddress}:${port}`);
 });
+
